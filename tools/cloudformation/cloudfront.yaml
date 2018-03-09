@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Cloudformation template for UI application"
+Parameters:
+  appHash:
+    Description: "github hash for commit"
+    Type: String
+  appName:
+    Description: Application Name
+    Type: String
+  branch:
+    Description: "used for origin path in cloudfront"
+    Type: String
+  environment:
+    Description: "AWS environment"
+    Type: String
+    AllowedValues:
+    - development
+    - staging
+    - production
+  expires:
+    Description: "ISO date of expiration"
+    Type: String
+    Default: 20200101
+  team:
+    Description: "Team that owns resources"
+    Type: String
+  tier:
+    Description: "Identifies the infrastructure for the team"
+    Type: String
+  owner:
+    Description: "Team lead for application/resource"
+    Type: String
+Mappings:
+  envMapping:
+    development:
+      domainName:
+      certArn: 
+    staging:
+      domainName: 
+      certArn: 
+    production:
+      domainName:
+      certArn: 
+Resources:
+  WebsiteBucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: !Join [ "-", [ !Ref appName, "website",!Ref environment, !Ref 'AWS::Region' ]]
+      WebsiteConfiguration:
+        IndexDocument: "index.html"
+      LoggingConfiguration:
+        DestinationBucketName: !Ref WebsiteBucketLogging
+        LogFilePrefix: !Ref appName
+      Tags:
+        - Key: environment
+          Value: !Ref environment
+        - Key: expires
+          Value: !Ref expires
+        - Key: owner
+          Value: !Ref owner
+        - Key: team
+          Value: !Ref team
+        - Key: tier
+          Value: !Ref tier
+        - Key: hash
+          Value: !Ref appHash
+  WebsiteBucketPolicy:
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Action:
+              - "s3:GetObject"
+            Effect: Allow
+            Resource: !Join [ "", ["arn:aws:s3:::", !Ref WebsiteBucket, "/*" ]]
+            Principal: "*"
+  WebsiteBucketLogging:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      AccessControl: LogDeliveryWrite
+      BucketName: !Join [ "-", [ !Ref appName, "logging", !Ref environment, !Ref 'AWS::Region' ]]
+      Tags:
+        - Key: environment
+          Value: !Ref environment
+        - Key: expires
+          Value: !Ref expires
+        - Key: owner
+          Value: !Ref owner
+        - Key: team
+          Value: !Ref team
+        - Key: tier
+          Value: !Ref tier
+  WebsiteCloudFront:
+    Type: "AWS::CloudFront::Distribution"
+    DependsOn: WebsiteBucket
+    Properties:
+      DistributionConfig:
+        Comment: "Cloudfront Distribution pointing to S3"
+        Aliases:
+          - !Join [ "", [!Ref appName, ".", !FindInMap [ envMapping, !Ref environment, domainName ] ]]
+        DefaultCacheBehavior:
+          ForwardedValues:
+            QueryString: true
+          TargetOriginId: !Ref WebsiteBucket
+          ViewerProtocolPolicy: "redirect-to-https"
+          Compress: true
+          MinTTL: 0
+          DefaultTTL: 3600
+          MaxTTL: 86400
+        CustomErrorResponses:
+        -
+          ErrorCachingMinTTL: 300
+          ErrorCode: 403
+          ResponseCode: 200
+          ResponsePagePath: "/index.html"
+        DefaultRootObject: "index.html"
+        Enabled: true
+        Origins:
+        - DomainName: !GetAtt WebsiteBucket.DomainName
+          Id: !Ref WebsiteBucket
+          OriginPath: !Join [ "", ["/", !Ref environment ]]
+          S3OriginConfig:
+            OriginAccessIdentity: !Ref AWS::NoValue
+        ViewerCertificate:
+          AcmCertificateArn: !FindInMap [ envMapping, !Ref environment, certArn ]
+          SslSupportMethod: "sni-only"
+  WebsiteDNSName:
+    Type: "AWS::Route53::RecordSetGroup"
+    Properties:
+      HostedZoneName: !Join [ "", [ !FindInMap [ envMapping, !Ref environment, domainName ], "." ]]
+      RecordSets:
+      - Name: !Join [ "", [ !Ref appName, ".", !FindInMap [ envMapping, !Ref environment, domainName ] ]]
+        Type: A
+        AliasTarget:
+          DNSName: !GetAtt WebsiteCloudFront.DomainName
+          HostedZoneId: Z2FDTNDATAQYW2
+Outputs:
+  BucketName:
+    Value: !Ref WebsiteBucket
+  DomainName:
+    Value: !Join [ "", [ "https://", !Ref appName, ".", !FindInMap [ envMapping, !Ref environment, domainName ] ]]
