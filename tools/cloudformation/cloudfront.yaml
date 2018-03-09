@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "Cloudformation template for UI application"
+Description: "Cloudformation template for UI applications"
 Parameters:
   appHash:
     Description: "github hash for commit"
